@@ -6,6 +6,10 @@ You can use this program to download legit backups of the games you bought in ca
 
 #Dependencies
 Python, .NET Framework
+Also, the internet. This downloads stuff it needs if it isn't present.
+
+#Installation
+You need [Python](https://www.python.org/downloads/), [PlaiCDN](https://github.com/Plailect/PlaiCDN/blob/master/PlaiCDN.py) and a copy of [the 3dsdb.com database](http://3dsdb.com/xml.php) in the directory where the exe is. If PlaiCDN or the database aren't there, it'll download it automatically.
 
 #Credits:
 Plaitect - for [PlaiCDN](https://github.com/Plailect/PlaiCDN)
