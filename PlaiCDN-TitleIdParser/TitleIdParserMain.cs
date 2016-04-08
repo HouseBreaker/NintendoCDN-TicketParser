@@ -24,7 +24,6 @@
 			{
 				if (!File.Exists(DecTitleKeysPath))
 				{
-					Console.ForegroundColor = ConsoleColor.Red;
 					PrintColorfulMessage(ConsoleColor.Red, "decTitleKeys.bin not found! Get it from Decrypt9. Press any key to exit.");
 					Console.ReadKey();
 					Environment.Exit(1);
