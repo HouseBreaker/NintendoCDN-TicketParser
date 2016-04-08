@@ -18,13 +18,15 @@
 
 		private const string DecTitleKeysPath = "decTitleKeys.bin";
 
+		private const string outputFile = "output.txt";
+
 		public static void Main(string[] args)
 		{
 			try
 			{
 				if (!File.Exists(DecTitleKeysPath))
 				{
-					PrintColorfulMessage(ConsoleColor.Red, "decTitleKeys.bin not found! Get it from Decrypt9. Press any key to exit.");
+					PrintColorfulLine(ConsoleColor.Red, "decTitleKeys.bin not found! Get it from Decrypt9. Press any key to exit.");
 					Console.ReadKey();
 					Environment.Exit(1);
 				}
@@ -57,11 +59,11 @@
 			}
 			catch (Exception ex)
 			{
-				PrintColorfulMessage(ConsoleColor.Red, "Fatal Error: " + ex.Message);
+				PrintColorfulLine(ConsoleColor.Red, "Fatal Error: " + ex.Message);
 			}
 		}
 
-		private static void PrintColorfulMessage(ConsoleColor color, string message)
+		private static void PrintColorfulLine(ConsoleColor color, string message)
 		{
 			Console.ForegroundColor = color;
 			Console.WriteLine(message);
@@ -74,15 +76,15 @@
 			{
 				while (!File.Exists(pathToPython))
 				{
-					PrintColorfulMessage(
+					PrintColorfulLine(
 						ConsoleColor.Red, 
-						"Couldn't find python on the system. Please paste the path of Python.exe below (right click -> copy as path)");
+						"Couldn't find Python 3 on the system. Please paste the path of python.exe below (right click -> copy as path)");
 
 					pathToPython = Console.ReadLine();
 				}
-
-				PrintColorfulMessage(ConsoleColor.Green, "Found python! Checking tickets...");
 			}
+
+			PrintColorfulLine(ConsoleColor.Green, $"Found python at {pathToPython}! Checking tickets...");
 
 			return pathToPython;
 		}
@@ -95,7 +97,7 @@
 				client.DownloadFile(dbAddress, DatabasePath);
 			}
 
-			PrintColorfulMessage(ConsoleColor.Green, "3DS database downloaded!");
+			PrintColorfulLine(ConsoleColor.Green, "3DS database downloaded!");
 		}
 
 		private static void DownloadPlaiCDN()
@@ -106,13 +108,13 @@
 				client.DownloadFile(PlaiCdnUrl, PlaiCdnPath);
 			}
 
-			PrintColorfulMessage(ConsoleColor.Green, "PlaiCDN downloaded!");
+			PrintColorfulLine(ConsoleColor.Green, "PlaiCDN downloaded!");
 		}
 
 		private static string[] GenerateTicketsWithPlaiCdn()
 		{
 			Console.Write("Checking tickets against Nintendo CDN.");
-			PrintColorfulMessage(ConsoleColor.Green, " This may take a while...");
+			PrintColorfulLine(ConsoleColor.Green, " This may take a while...");
 
 			var pathToPython = CheckIfPythonIsInstalled(Environment.GetEnvironmentVariable("PYTHON"));
 
@@ -138,7 +140,7 @@
 
 		private static void ParseTicketsFromDatabase(string titleKeysPath, string releasesDatabasePath)
 		{
-			PrintColorfulMessage(ConsoleColor.Green, "Checking Title IDs against 3dsdb.com database");
+			PrintColorfulLine(ConsoleColor.Green, "Checking Title IDs against 3dsdb.com database");
 			var tickets = ParseTickets(titleKeysPath);
 			var xmlFile = XElement.Load(releasesDatabasePath);
 			var titlesFound = new List<Nintendo3DSRelease>();
@@ -195,6 +197,14 @@
 			}
 
 			WriteOutputToFile(longestTitleLength, longestPublisherLength, titlesFound, remainingTitles);
+
+			Console.Write("Done! Tickets and titles exported to ");
+			PrintColorfulLine(ConsoleColor.Green, outputFile);
+
+			#if !DEBUG
+				Console.Write("Press any key to exit...");
+				Console.ReadKey();
+			#endif
 		}
 
 		private static void WriteOutputToFile(
@@ -203,7 +213,7 @@
 			List<Nintendo3DSRelease> titlesFound, 
 			List<Nintendo3DSRelease> remainingTitles)
 		{
-			using (StreamWriter writer = new StreamWriter("output.txt"))
+			using (var writer = new StreamWriter(outputFile))
 			{
 				PrintTitleLegend(titlePad, publisherPad, writer);
 				foreach (var title in titlesFound)
