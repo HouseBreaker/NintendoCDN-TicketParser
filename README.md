@@ -6,6 +6,7 @@ You can use this program to download legit backups of the games you bought in ca
 
 #Dependencies
 Python, .NET Framework
+
 Also, the internet. This downloads stuff it needs if it isn't present.
 
 #Running it
