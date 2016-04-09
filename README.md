@@ -5,7 +5,7 @@ Using PlaiCDN, checks a decrypted title keys file for the legit title keys, look
 You can use this program to download legit backups of the games you bought in case you need to. I don't care and am not liable for anything else piracy-related that you do with it.
 
 #Dependencies
-Python, .NET Framework
+.NET Framework 4.5.2
 
 Also, the internet. This downloads stuff it needs if it isn't present.
 
@@ -15,4 +15,4 @@ You need [Python](https://www.python.org/downloads/), [PlaiCDN](https://github.c
 Also you need a copy of your decrypted title keys, which you can get using [Decrypt9](https://gbatemp.net/threads/download-decrypt9-open-source-decryption-tools-wip.388831/)
 
 #Credits:
-Plaitect - for [PlaiCDN](https://github.com/Plailect/PlaiCDN)
+Plailect - for [PlaiCDN](https://github.com/Plailect/PlaiCDN)
