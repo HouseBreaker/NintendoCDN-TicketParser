@@ -6,13 +6,24 @@
 	// ReSharper disable once InconsistentNaming
 	public class Nintendo3DSRelease
 	{
-		public Nintendo3DSRelease(string name, string publisher, string region, string titleId, string titleKey)
+		public Nintendo3DSRelease(
+			string name, 
+			string publisher, 
+			string region, 
+			string type, 
+			string serial, 
+			string titleId, 
+			string titleKey, 
+			int sizeInMegabytes)
 		{
 			this.Name = name;
 			this.Publisher = publisher;
 			this.Region = region;
+			this.Type = type;
+			this.Serial = serial;
 			this.TitleId = titleId;
 			this.TitleKey = titleKey;
+			this.SizeInMegabytes = sizeInMegabytes;
 		}
 
 		public string Name { get; }
@@ -21,9 +32,15 @@
 
 		public string Region { get; }
 
+		public string Type { get; }
+
+		public string Serial { get; }
+
 		public string TitleId { get; }
 
 		public string TitleKey { get; }
+
+		public int SizeInMegabytes { get; }
 
 		public override bool Equals(object obj)
 		{
