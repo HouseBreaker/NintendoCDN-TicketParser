@@ -69,7 +69,7 @@
 									{ int.MaxValue, "WLD" }, // Region Free
 								};
 
-				var region = regions[country];
+				var region = regions.ContainsKey(country) ? regions[country] : "Unknown";
 
 				return new Nintendo3DSRelease(name, publisher, region, titleId, titleKey);
 			}

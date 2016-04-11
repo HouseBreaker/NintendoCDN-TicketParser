@@ -297,16 +297,20 @@
 			// the only reason I'm doing this unknownTitles thing is so we don't pollute the console output with them until the end.
 			var result = new List<Nintendo3DSRelease>();
 			var unknownTitles = new List<Nintendo3DSRelease>();
+
+			var countOfUnknownTitles = 0;
+
 			foreach (var downloadedTitle in
 				remainingTitles.Select(title => CDNUtils.DownloadTitleData(title.TitleId, title.TitleKey, hmm)))
 			{
 				if (downloadedTitle.Name != "Unknown")
 				{
 					result.Add(downloadedTitle);
-					Console.WriteLine(TitleInfo(downloadedTitle, titlePad, publisherPad));
+					Console.WriteLine('\r' + TitleInfo(downloadedTitle, titlePad, publisherPad));
 				}
 				else
 				{
+					Console.Write($"\r{++countOfUnknownTitles} Unknown titles found.");
 					unknownTitles.Add(downloadedTitle);
 				}
 			}
