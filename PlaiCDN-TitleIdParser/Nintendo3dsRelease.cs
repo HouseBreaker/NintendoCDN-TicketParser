@@ -1,7 +1,6 @@
 ﻿namespace _3DSTicketTitleParser
 {
 	using System;
-	using System.Collections;
 
 	// ReSharper disable once InconsistentNaming
 	public class Nintendo3DSRelease
@@ -24,6 +23,30 @@
 			this.TitleId = titleId;
 			this.TitleKey = titleKey;
 			this.SizeInMegabytes = sizeInMegabytes;
+		}
+
+		public Nintendo3DSRelease(string name, string publisher, string region, string titleId, string titleKey)
+		{
+			this.Name = name;
+			this.Publisher = publisher;
+			this.Region = region;
+			this.Type = "Unknown";
+			this.Serial = "Unknown";
+			this.TitleId = titleId;
+			this.TitleKey = titleKey;
+			this.SizeInMegabytes = 0;
+		}
+
+		public Nintendo3DSRelease(string titleId, string titleKey)
+		{
+			this.Name = "Unknown";
+			this.Publisher = "Unknown";
+			this.Region = "Unknown";
+			this.Type = "Unknown";
+			this.Serial = "Unknown";
+			this.TitleId = titleId;
+			this.TitleKey = titleKey;
+			this.SizeInMegabytes = 0;
 		}
 
 		public string Name { get; }

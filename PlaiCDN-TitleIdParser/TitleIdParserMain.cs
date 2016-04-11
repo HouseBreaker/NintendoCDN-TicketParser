@@ -10,6 +10,9 @@
 	using System.Text;
 	using System.Xml.Linq;
 
+	using PlaiCDN_TitleIdParser;
+	using PlaiCDN_TitleIdParser.Properties;
+
 	public class TitleIdParserMain
 	{
 		private const string LegitTicketsPath = "LegitTickets.txt";
@@ -26,6 +29,9 @@
 
 		public static void Main(string[] args)
 		{
+			ServicePointManager.ServerCertificateValidationCallback = (sender, certificate, chain, sslPolicyErrors) => true;
+			Console.OutputEncoding = Encoding.UTF8;
+
 			try
 			{
 				var assemblyName = Assembly.GetExecutingAssembly().GetName();
@@ -36,8 +42,6 @@
 
 				if (args != null && args.Contains("-h"))
 				{
-					// I hope not lol
-					// PrintColorfulLine(ConsoleColor.Yellow, "You need Python 3 to use this program.");
 					PrintColorfulLine(ConsoleColor.Yellow, "HELP:");
 					Console.WriteLine();
 					Console.WriteLine("This utility uses PlaiCDN to check your decrypted 3ds tickets from decTitleKeys.bin.");
@@ -155,7 +159,7 @@
 		{
 			Console.Write("Checking tickets against Nintendo CDN.");
 			PrintColorfulLine(ConsoleColor.Green, " This may take a while...");
-			
+
 			var plaiCdnProcessInfo = new ProcessStartInfo(PlaiCdnPath, " -checkbin");
 
 			// Python waits until the process exits to print the output unless you're using IronPython 
@@ -252,16 +256,22 @@
 					$"{title.TitleId} {title.TitleKey} | {title.Name.PadRight(longestTitleLength)}{title.Publisher.PadRight(longestPublisherLength)}{title.Region}");
 			}
 
-			var remainingTitles = tickets.Except(titlesFound).ToList();
-
-			Console.WriteLine("\r\nTitles which 3dsdb couldn't find but still have valid Title keys:");
+			Console.WriteLine("\r\nTitles which 3dsdb couldn't find but we'll look up from the Nintendo CDN:");
 
 			Console.WriteLine(PrintTitleLegend(longestTitleLength, longestPublisherLength));
-			foreach (var title in remainingTitles)
-			{
-				Console.WriteLine(
-					$"{title.TitleId} {title.TitleKey} | {"Unknown".PadRight(longestTitleLength)}{"Unknown".PadRight(longestPublisherLength)}{"Unknown"}");
-			}
+
+			var hmm = new[]
+						{
+							Convert.FromBase64String(Resources.hmm1), Convert.FromBase64String(Resources.hmm2), 
+							Convert.FromBase64String(Resources.hmm3), Convert.FromBase64String(Resources.hmm4), 
+							Convert.FromBase64String(Resources.hmm5), 
+						};
+
+			var remainingTitles = tickets.Except(titlesFound).ToList();
+			remainingTitles =
+				LookUpRemainingTitles(remainingTitles, hmm, longestTitleLength, longestPublisherLength)
+					.OrderBy(r => r.Name)
+					.ToList();
 
 			WriteOutputToFile(longestTitleLength, longestPublisherLength, titlesFound, remainingTitles);
 			WriteOutputToCsv(titlesFound, remainingTitles);
@@ -278,6 +288,44 @@
 #endif
 		}
 
+		private static List<Nintendo3DSRelease> LookUpRemainingTitles(
+			List<Nintendo3DSRelease> remainingTitles, 
+			byte[][] hmm, 
+			int titlePad, 
+			int publisherPad)
+		{
+			// the only reason I'm doing this unknownTitles thing is so we don't pollute the console output with them until the end.
+			var result = new List<Nintendo3DSRelease>();
+			var unknownTitles = new List<Nintendo3DSRelease>();
+			foreach (var downloadedTitle in
+				remainingTitles.Select(title => CDNUtils.DownloadTitleData(title.TitleId, title.TitleKey, hmm)))
+			{
+				if (downloadedTitle.Name != "Unknown")
+				{
+					result.Add(downloadedTitle);
+					Console.WriteLine(TitleInfo(downloadedTitle, titlePad, publisherPad));
+				}
+				else
+				{
+					unknownTitles.Add(downloadedTitle);
+				}
+			}
+
+			foreach (var unknownTitle in unknownTitles)
+			{
+				Console.WriteLine(TitleInfo(unknownTitle, titlePad, publisherPad));
+			}
+
+			result = result.Concat(unknownTitles).ToList();
+			return result;
+		}
+
+		private static string TitleInfo(Nintendo3DSRelease title, int titlePad, int publisherPad)
+		{
+			return
+				$"{title.TitleId} {title.TitleKey.PadRight(32)} | {title.Name.PadRight(titlePad)}{title.Publisher.PadRight(publisherPad)}{title.Region}";
+		}
+
 		private static void WriteOutputToFile(
 			int titlePad, 
 			int publisherPad, 
@@ -291,17 +339,15 @@
 				sb.AppendLine(PrintTitleLegend(titlePad, publisherPad));
 				foreach (var title in titlesFound)
 				{
-					sb.AppendLine(
-						$"{title.TitleId} {title.TitleKey} | {title.Name.PadRight(titlePad)}{title.Publisher.PadRight(publisherPad)}{title.Region}");
+					sb.AppendLine(TitleInfo(title, titlePad, publisherPad));
 				}
 
-				sb.AppendLine("\r\nTitles which 3dsdb couldn't find but still have valid Title keys:");
+				sb.AppendLine("\r\nTitles which 3dsdb couldn't find but are valid against the Nintendo CDN:");
 
 				sb.AppendLine(PrintTitleLegend(titlePad, publisherPad));
 				foreach (var title in remainingTitles)
 				{
-					sb.AppendLine(
-						$"{title.TitleId} {title.TitleKey} | {"Unknown".PadRight(titlePad)}{"Unknown".PadRight(publisherPad)}{"Unknown"}");
+					sb.AppendLine(TitleInfo(title, titlePad, publisherPad));
 				}
 
 				writer.Write(sb.ToString().TrimEnd());
@@ -310,21 +356,22 @@
 
 		private static void WriteOutputToCsv(List<Nintendo3DSRelease> titlesFound, List<Nintendo3DSRelease> remainingTitles)
 		{
-			using (var writer = new StreamWriter(DetailedOutputFile))
+			using (var writer = new StreamWriter(DetailedOutputFile, false, Encoding.UTF8))
 			{
 				var sb = new StringBuilder();
 
 				sb.AppendLine("Title ID,Title Key,Name,Publisher,Region,Type,Serial,Size");
+				Func<Nintendo3DSRelease, string> DetailedCSVInfo =
+					r => $"{r.TitleId},{r.TitleKey},{r.Name},{r.Publisher},{r.Region},{r.Type},{r.Serial},{r.SizeInMegabytes}MB";
+
 				foreach (var title in titlesFound)
 				{
-					sb.AppendLine(
-						$"{title.TitleId},{title.TitleKey},{title.Name},{title.Publisher},{title.Region},{title.Type},{title.Serial},{title.SizeInMegabytes}MB");
+					sb.AppendLine(DetailedCSVInfo(title));
 				}
 
 				foreach (var title in remainingTitles)
 				{
-					sb.AppendLine(
-						$"{title.TitleId},{title.TitleKey},{title.Name},{title.Publisher},{title.Region},{title.Type},{title.Serial},{title.SizeInMegabytes}MB");
+					sb.AppendLine(DetailedCSVInfo(title));
 				}
 
 				writer.Write(sb.ToString().TrimEnd());
@@ -346,9 +393,8 @@
 
 		private static string PrintTitleLegend(int longestTitleLength, int longestPublisherLength)
 		{
-			return(
-				"TitleID".PadRight(16 + 1) + "Title Key".PadRight(32 + 3) + "Name".PadRight(longestTitleLength)
-				+ "Publisher".PadRight(longestPublisherLength) + "Region");
+			return "TitleID".PadRight(16 + 1) + "Title Key".PadRight(32 + 3) + "Name".PadRight(longestTitleLength)
+					+ "Publisher".PadRight(longestPublisherLength) + "Region";
 		}
 
 		private static List<Nintendo3DSRelease> ParseTickets(string titleKeysPath)
