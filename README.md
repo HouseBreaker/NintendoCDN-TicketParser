@@ -16,3 +16,4 @@ Also you need a copy of your decrypted title keys, which you can get using [Decr
 
 #Credits:
 Plailect - for [PlaiCDN](https://github.com/Plailect/PlaiCDN)
+Shadowhand - for help with the region parsing code
