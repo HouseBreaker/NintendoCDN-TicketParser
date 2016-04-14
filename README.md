@@ -4,6 +4,8 @@ Using PlaiCDN, checks a decrypted title keys file for the legit title keys, look
 #Disclaimer
 You can use this program to get more info about the title keys of the games you bought in case you need those keys to reacquire them again on the EShop. Obviously this can be used for piracy. I don't care and am not liable for anything piracy-related you do with it.
 
+Also, since this depends on PlaiCDN to do all the dirty work, and PlaiCDN is in active development, this program might break at random. So unless my release is recent, I cannot guarantee that this program will work at all.
+
 #Dependencies
 .NET Framework 4.5.2
 
