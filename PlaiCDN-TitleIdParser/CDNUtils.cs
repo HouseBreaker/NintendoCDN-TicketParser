@@ -1,4 +1,4 @@
-﻿namespace PlaiCDN_TitleIdParser
+﻿namespace NintendoCDN_TicketParser
 {
 	using System;
 	using System.Collections.Generic;
@@ -7,11 +7,18 @@
 	using System.Security.Cryptography;
 	using System.Text;
 
-	using _3DSTicketTitleParser;
+	using NintendoCDN_TicketParser.Properties;
 
 	public static class CDNUtils
 	{
-		public static Nintendo3DSRelease DownloadTitleData(string titleId, string titleKey, byte[][] hmm)
+		private static readonly byte[][] Hmm =
+			{
+				Convert.FromBase64String(Resources.hmm1), 
+				Convert.FromBase64String(Resources.hmm2), Convert.FromBase64String(Resources.hmm3), 
+				Convert.FromBase64String(Resources.hmm4), Convert.FromBase64String(Resources.hmm5), 
+			};
+
+		public static Nintendo3DSRelease DownloadTitleData(string titleId, string titleKey)
 		{
 			titleId = titleId.ToUpper();
 
@@ -31,7 +38,7 @@
 
 			var dataMinus2 = new byte[data.Length - 2];
 			Array.Copy(data, 2, dataMinus2, 0, dataMinus2.Length);
-			var iconData = AESDecrypt(dataMinus2, hmm[data[1]], hmm[4]);
+			var iconData = AESDecrypt(dataMinus2, Hmm[data[1]], Hmm[4]);
 			var text2 = titleId.Substring(0, 4);
 
 			const string _3dsTitle = "0004";
@@ -45,7 +52,6 @@
 				// 	this.PB_SmallIcon.Image = ImageUtil.ReadImageFromStream(memoryStream, 24, 24, ImageUtil.PixelFormat.RGB565);
 				// 	this.PB_LargeIcon.Image = ImageUtil.ReadImageFromStream(memoryStream, 48, 48, ImageUtil.PixelFormat.RGB565);
 				// }
-
 				Func<string, string> cleanInput = a => a.TrimEnd('\0').Replace("\n", " ");
 
 				// var titleIdFromData = BitConverter.ToUInt64(iconData, 32).ToString("X16");
@@ -53,7 +59,7 @@
 				var publisher = cleanInput(Encoding.Unicode.GetString(iconData, 464 + 512, 128));
 
 				var country = BitConverter.ToUInt32(iconData, 48);
-				
+
 				// <3 Shadowhand
 				var regions = new Dictionary<uint, string>
 								{
@@ -73,8 +79,6 @@
 
 				return new Nintendo3DSRelease(name, publisher, region, titleId, titleKey);
 			}
-
-			Console.WriteLine("not a 3ds title");
 			return new Nintendo3DSRelease(titleId, titleKey);
 		}
 

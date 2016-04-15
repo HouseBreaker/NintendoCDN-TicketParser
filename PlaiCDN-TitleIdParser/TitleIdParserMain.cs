@@ -1,8 +1,7 @@
-﻿namespace _3DSTicketTitleParser
+﻿namespace NintendoCDN_TicketParser
 {
 	using System;
 	using System.Collections.Generic;
-	using System.Diagnostics;
 	using System.IO;
 	using System.Linq;
 	using System.Net;
@@ -10,16 +9,16 @@
 	using System.Text;
 	using System.Xml.Linq;
 
-	using PlaiCDN_TitleIdParser;
-	using PlaiCDN_TitleIdParser.Properties;
-
+	// todo: put all of this into its own classes because it's terrifying to look at
 	public class TitleIdParserMain
 	{
-		private const string LegitTicketsPath = "LegitTickets.txt";
+		private const string ValidTicketsPath = "ValidTickets.txt";
 
-		private const string DatabasePath = "3dsreleases.xml";
+		private const string DecryptedTitleKeysPath = "decTitleKeys.bin";
 
-		private const string PlaiCdnPath = "PlaiCDN.exe";
+		private const string _3dsDbPath = "3dsreleases.xml";
+
+		private const string GroovyCiaPath = "community.xml";
 
 		private const string DecTitleKeysPath = "decTitleKeys.bin";
 
@@ -44,8 +43,9 @@
 				{
 					PrintColorfulLine(ConsoleColor.Yellow, "HELP:");
 					Console.WriteLine();
-					Console.WriteLine("This utility uses PlaiCDN to check your decrypted 3ds tickets from decTitleKeys.bin.");
-					Console.WriteLine("After validating them, it checks them against the 3dsdb.com database and shows you");
+					Console.WriteLine("This utility checks your decrypted 3ds tickets from decTitleKeys.bin.");
+					Console.WriteLine(
+						"After validating them, it checks them against the 3dsdb.com and FunkyCIA databases and shows you");
 					Console.WriteLine("the title names along with info about them.");
 					Console.WriteLine();
 					Console.WriteLine(
@@ -68,45 +68,90 @@
 				}
 				else
 				{
-					if (!File.Exists(DatabasePath))
+					if (!File.Exists(_3dsDbPath))
 					{
 						Console.WriteLine("3DS titles database not found! Downloading...");
 						Download3DSDatabase();
 					}
 					else
 					{
-						var dateOfDatabase = File.GetLastWriteTime(DatabasePath);
+						var dateOfDatabase = File.GetLastWriteTime(_3dsDbPath);
 						Console.WriteLine($"3DS titles database last updated at {dateOfDatabase}");
 					}
 
-					if (!File.Exists(PlaiCdnPath))
+					if (!File.Exists(GroovyCiaPath))
 					{
-						Console.WriteLine("PlaiCDN not found! Downloading...");
-						DownloadPlaiCDN();
+						Console.WriteLine("GroovyCIA database not found! Downloading...");
+						DownloadGroovyCiaDatabase();
 					}
 					else
 					{
-						var dateOfPlaiCdn = File.GetLastWriteTime(PlaiCdnPath);
-						Console.WriteLine($"PlaiCDN last updated at {dateOfPlaiCdn}");
+						var dateOfDatabase = File.GetLastWriteTime(GroovyCiaPath);
+						Console.WriteLine($"3DS titles database last updated at {dateOfDatabase}");
 					}
 				}
 
-				if (!File.Exists(LegitTicketsPath) || new FileInfo(LegitTicketsPath).Length == 0)
+				var tickets = new Dictionary<string, string>();
+
+				if (!File.Exists(ValidTicketsPath) || new FileInfo(ValidTicketsPath).Length == 0)
 				{
-					Console.WriteLine("Legit tickets not found! Generating from PlaiCDN...");
-					var tickets = GenerateTicketsWithPlaiCdn();
+					Console.WriteLine("Valid tickets not found! Generating...");
+					tickets = DecodeTickets();
+					var ticketsAsStrings = tickets.Select(ticket => ticket.Key + " " + ticket.Value).ToList();
 
-					using (var writer = new StreamWriter(LegitTicketsPath))
-					{
-						writer.Write(string.Join(Environment.NewLine, tickets));
-					}
+					File.WriteAllText(ValidTicketsPath, string.Join(Environment.NewLine, ticketsAsStrings));
+					Console.WriteLine("Wrote valid tickets to ValidTickets.txt");
 				}
 
-				ParseTicketsFromDatabase(LegitTicketsPath, DatabasePath);
+				var parsedTickets = ParseTickets(tickets).ToArray();
+
+				var titlesFound = ParseTicketsFromGroovyCiaDb(parsedTickets, GroovyCiaPath);
+				titlesFound = ParseTicketsFrom3dsDb(titlesFound);
+
+				var longestTitleLength = titlesFound.Max(a => a.Name.Length) + 2;
+				var longestPublisherLength = titlesFound.Max(a => a.Publisher.Length) + 2;
+
+				PrintNumberOfTicketsFound(titlesFound, parsedTickets);
+
+				Console.WriteLine(PrintTitleLegend(longestTitleLength, longestPublisherLength));
+
+				titlesFound = titlesFound.OrderBy(r => r.Name).ToList();
+
+				foreach (var title in titlesFound)
+				{
+					Console.WriteLine(
+						$"{title.TitleId} {title.TitleKey} | {title.Name.PadRight(longestTitleLength)}{title.Publisher.PadRight(longestPublisherLength)}{title.Region}");
+				}
+
+				Console.WriteLine(
+					"\r\nTitles which 3dsdb or the GroovyCIA db couldn't find but we'll look up from the Nintendo CDN:");
+
+				Console.WriteLine(PrintTitleLegend(longestTitleLength, longestPublisherLength));
+
+				var remainingTitles = parsedTickets.Except(titlesFound).ToList();
+				remainingTitles =
+					LookUpRemainingTitles(remainingTitles, longestTitleLength, longestPublisherLength).OrderBy(r => r.Name).ToList();
+
+				WriteOutputToFile(longestTitleLength, longestPublisherLength, titlesFound, remainingTitles);
+				WriteOutputToCsv(titlesFound, remainingTitles);
+
+				Console.Write("Done! Tickets and titles exported to ");
+				PrintColorfulLine(ConsoleColor.Green, OutputFile);
+
+				Console.Write("Detailed info exported to ");
+				PrintColorfulLine(ConsoleColor.Green, DetailedOutputFile);
+
+#if !DEBUG
+			Console.Write("Press any key to exit...");
+			Console.ReadKey();
+#endif
 			}
 			catch (Exception ex)
 			{
 				PrintColorfulLine(ConsoleColor.Red, "Fatal Error: " + ex.Message);
+#if DEBUG
+				Console.WriteLine(ex.StackTrace);
+#endif
 			}
 		}
 
@@ -115,8 +160,10 @@
 			Console.WriteLine("Update option chosen.");
 			Console.WriteLine("Updating 3DS Database from 3dsdb.com...");
 			Download3DSDatabase();
-			Console.WriteLine("Updating PlaiCDN from GitHub...");
-			DownloadPlaiCDN();
+
+			Console.WriteLine("Updating GroovyCIA database from http://ptrk25.github.io/GroovyFX/database/community.xml...");
+			Download3DSDatabase();
+
 			Console.Write("Press C to recheck titles or any other key to exit...");
 
 			var keyChosen = Console.ReadKey().Key;
@@ -126,11 +173,36 @@
 			}
 		}
 
-		private static void PrintColorfulLine(ConsoleColor color, string message)
+		private static void PrintColorful(ConsoleColor color, object message)
+		{
+			Console.ForegroundColor = color;
+			Console.Write(message);
+			Console.ResetColor();
+		}
+
+		private static void PrintColorfulLine(ConsoleColor color, object message)
 		{
 			Console.ForegroundColor = color;
 			Console.WriteLine(message);
 			Console.ResetColor();
+		}
+
+		private static void DownloadGroovyCiaDatabase()
+		{
+			const string dbAddress = "http://ptrk25.github.io/GroovyFX/database/community.xml";
+			using (var client = new WebClient())
+			{
+				try
+				{
+					client.DownloadFile(dbAddress, GroovyCiaPath);
+				}
+				catch (WebException ex)
+				{
+					PrintColorfulLine(ConsoleColor.Red, "Could not download the GroovyCIA database. Error: " + ex.Message);
+				}
+			}
+
+			PrintColorfulLine(ConsoleColor.Green, "GroovyCIA database downloaded!");
 		}
 
 		private static void Download3DSDatabase()
@@ -138,54 +210,206 @@
 			const string dbAddress = @"http://3dsdb.com/xml.php";
 			using (var client = new WebClient())
 			{
-				client.DownloadFile(dbAddress, DatabasePath);
+				try
+				{
+					client.DownloadFile(dbAddress, _3dsDbPath);
+				}
+				catch (WebException ex)
+				{
+					PrintColorfulLine(ConsoleColor.Red, "Could not download the 3ds database. Error: " + ex.Message);
+				}
 			}
 
 			PrintColorfulLine(ConsoleColor.Green, "3DS database downloaded!");
 		}
 
-		private static void DownloadPlaiCDN()
+		private static Dictionary<string, string> DecodeTickets()
 		{
-			const string PlaiCdnUrl = @"https://raw.githubusercontent.com/Plailect/PlaiCDN/master/PlaiCDN.exe";
+			Console.Write("Checking Title Keys validity against Nintendo CDN.");
+			PrintColorfulLine(ConsoleColor.Green, " This might take a while...");
+			PrintColorfulLine(ConsoleColor.Green, "Parsing only Games and Addon DLCs");
+
+			Func<string, bool> gameOrDlc =
+				titleId =>
+				Nintendo3DSRelease.GetTitleType(titleId) == "Unknown Type"
+				|| Nintendo3DSRelease.GetTitleType(titleId) == "Addon DLC" || Nintendo3DSRelease.GetTitleType(titleId) == "3DS Game";
+
+			var ticketsDictionary = ParseDecTitleKeysBin();
+
+			ticketsDictionary = ticketsDictionary.Where(a => gameOrDlc(a.Key)).ToDictionary(a => a.Key, a => a.Value);
+
+			var validKeys = new Dictionary<string, string>();
+
+			var processedTickets = 0;
+			var totalTickets = ticketsDictionary.Count;
+
+			foreach (var pair in ticketsDictionary)
+			{
+				var titleId = pair.Key;
+				var titleKey = pair.Value;
+
+				var valid = TitleKeyIsValid(titleId, titleKey);
+
+				if (valid)
+				{
+					validKeys[titleId] = titleKey;
+					const int TitleTypePad = 25;
+					Console.Write('\r' + Nintendo3DSRelease.GetTitleType(titleId).PadRight(TitleTypePad) + pair.Key + ": Valid | ");
+					PrintColorful(ConsoleColor.Green, $"({++processedTickets}/{totalTickets} valid)");
+				}
+				else
+				{
+					totalTickets--;
+				}
+			}
+
+			Console.WriteLine();
+
+			Console.Write("Found ");
+			PrintColorful(ConsoleColor.Green, ticketsDictionary.Count - totalTickets);
+			Console.WriteLine(" invalid tickets. Searching through databases for the valid ones...");
+
+			return validKeys;
+		}
+
+		private static Dictionary<string, string> ParseDecTitleKeysBin()
+		{
+			var ticketsDictionary = new Dictionary<string, string>();
+
+			using (var reader = new BinaryReader(new FileStream(DecryptedTitleKeysPath, FileMode.Open, FileAccess.Read)))
+			{
+				var numberOfKeys = new FileInfo(DecryptedTitleKeysPath).Length / 32;
+
+				reader.ReadBytes(16); // seek in
+
+				for (var entry = 0; entry < numberOfKeys; entry++)
+				{
+					reader.ReadBytes(8); // skip 8 bytes
+					var titleId = BitConverter.ToString(reader.ReadBytes(8)).Replace("-", string.Empty);
+					var titleKey = BitConverter.ToString(reader.ReadBytes(16)).Replace("-", string.Empty);
+
+					// var pair = BitConverter.ToString(titleId) + ": " + BitConverter.ToString(titleKey);
+					// tickets.Add(pair);
+					ticketsDictionary[titleId] = titleKey;
+				}
+			}
+
+			return ticketsDictionary;
+		}
+
+		/// <summary>
+		/// offsets and other things from PlaiCDN
+		/// </summary>
+		private static bool TitleKeyIsValid(string titleId, string titleKey)
+		{
+			byte[] tmd;
+
+			var cdnUrl = "http://nus.cdn.c.shop.nintendowifi.net/ccs/download/" + titleId;
+
 			using (var client = new WebClient())
 			{
-				client.DownloadFile(PlaiCdnUrl, PlaiCdnPath);
+				try
+				{
+					tmd = client.DownloadData(cdnUrl + "/tmd");
+				}
+				catch (WebException)
+				{
+					return false;
+				}
 			}
 
-			PrintColorfulLine(ConsoleColor.Green, "PlaiCDN downloaded!");
-		}
-
-		private static string[] GenerateTicketsWithPlaiCdn()
-		{
-			Console.Write("Checking tickets against Nintendo CDN.");
-			PrintColorfulLine(ConsoleColor.Green, " This may take a while...");
-
-			var plaiCdnProcessInfo = new ProcessStartInfo(PlaiCdnPath, " -checkbin");
-
-			// Python waits until the process exits to print the output unless you're using IronPython 
-			// so I only need these for getting PlaiCDN's output.
-			plaiCdnProcessInfo.UseShellExecute = false;
-			plaiCdnProcessInfo.RedirectStandardOutput = true;
-
-			var plaiCdnProcess = Process.Start(plaiCdnProcessInfo);
-
-			var tickets = new List<string>();
-			string line;
-			while ((line = plaiCdnProcess.StandardOutput.ReadLine()) != null)
+			if (BitConverter.ToString(tmd.Take(4).ToArray()) != "00-01-00-04")
 			{
-				tickets.Add(line);
+				return false;
 			}
 
-			plaiCdnProcess.WaitForExit();
-			return tickets.Skip(2).ToArray();
+			const int contentOffset = 0xB04;
+
+			var contentId = BitConverter.ToString(tmd.Skip(contentOffset).Take(4).ToArray()).Replace("-", string.Empty);
+
+			byte[] result;
+
+			using (var client = new WebClient())
+			{
+				try
+				{
+					using (var stream = client.OpenRead($"{cdnUrl}/{contentId}"))
+					{
+						result = new byte[272];
+
+						var bytesRead = 0;
+						while (bytesRead <= 271)
+						{
+							result[bytesRead++] = (byte)stream.ReadByte();
+						}
+					}
+				}
+				catch (WebException)
+				{
+					return false;
+				}
+			}
+
+			Func<string, byte[]> hexStringToByte =
+				hex =>
+				Enumerable.Range(0, hex.Length)
+					.Where(x => x % 2 == 0)
+					.Select(x => Convert.ToByte(hex.Substring(x, 2), 16))
+					.ToArray();
+
+			var titleKeyBytes = hexStringToByte(titleKey);
+
+			var decrypted = EncryptionHelper.AesDecrypt(titleKeyBytes, result);
+
+			return decrypted.Contains("NCCH");
 		}
 
-		private static void ParseTicketsFromDatabase(string titleKeysPath, string releasesDatabasePath)
+		private static List<Nintendo3DSRelease> ParseTicketsFromGroovyCiaDb(
+			Nintendo3DSRelease[] parsedTickets, 
+			string groovyCiaPath)
+		{
+			PrintColorfulLine(ConsoleColor.Green, "Checking Title IDs against GroovyCIA database");
+			var xmlFile = XElement.Load(groovyCiaPath);
+			var titlesFound = new List<Nintendo3DSRelease>();
+
+			foreach (var node in xmlFile.Nodes())
+			{
+				var titleInfo = node as XElement;
+
+				if (titleInfo == null)
+				{
+					continue;
+				}
+
+				Func<string, string> titleData = tag => titleInfo.Element(tag).Value.Trim();
+				var titleId = titleData("titleid");
+
+				var matchedTitles =
+					parsedTickets.Where(ticket => string.Compare(ticket.TitleId, titleId, StringComparison.OrdinalIgnoreCase) == 0)
+						.ToList();
+
+				foreach (var title in matchedTitles)
+				{
+					var name = titleData("name");
+					var region = titleData("region");
+					var serial = titleData("serial");
+
+					var foundTicket = new Nintendo3DSRelease(name, null, region, null, serial, titleId, title.TitleKey, null);
+
+					if (!titlesFound.Exists(a => Equals(a, foundTicket)))
+					{
+						titlesFound.Add(foundTicket);
+					}
+				}
+			}
+
+			return titlesFound;
+		}
+
+		private static List<Nintendo3DSRelease> ParseTicketsFrom3dsDb(List<Nintendo3DSRelease> parsedTickets)
 		{
 			PrintColorfulLine(ConsoleColor.Green, "Checking Title IDs against 3dsdb.com database");
-			var tickets = ParseTickets(titleKeysPath);
-			var xmlFile = XElement.Load(releasesDatabasePath);
-			var titlesFound = new List<Nintendo3DSRelease>();
+			var xmlFile = XElement.Load(_3dsDbPath);
 
 			foreach (XElement titleInfo in xmlFile.Nodes())
 			{
@@ -193,14 +417,12 @@
 				var titleId = titleData("titleid");
 
 				var matchedTitles =
-					tickets.Where(ticket => string.Compare(ticket.TitleId, titleId, StringComparison.OrdinalIgnoreCase) == 0).ToList();
+					parsedTickets.Where(ticket => string.Compare(ticket.TitleId, titleId, StringComparison.OrdinalIgnoreCase) == 0)
+						.ToList();
 
-				foreach (Nintendo3DSRelease title in matchedTitles)
+				foreach (var title in matchedTitles)
 				{
-					var name = titleData("name");
 					var publisher = titleData("publisher");
-					var region = titleData("region");
-					var serial = titleData("serial");
 
 					string type;
 
@@ -226,71 +448,37 @@
 					var sizeInMegabytes = Convert.ToInt32(decimal.Parse(titleData("trimmedsize")) / (int)Math.Pow(2, 20));
 
 					var foundTicket = new Nintendo3DSRelease(
-						name, 
+						title.Name, 
 						publisher, 
-						region, 
+						title.Region, 
 						type, 
-						serial, 
+						title.Serial, 
 						titleId, 
 						title.TitleKey, 
 						sizeInMegabytes);
-					if (!titlesFound.Exists(a => Equals(a, foundTicket)))
+
+					if (!parsedTickets.Exists(a => Equals(a, foundTicket)))
 					{
-						titlesFound.Add(foundTicket);
+						parsedTickets.Add(foundTicket);
+					}
+					else
+					{
+						title.Type = type;
+						title.Publisher = publisher;
+						title.SizeInMegabytes = sizeInMegabytes;
+
+						// remove title and add updated one
+						parsedTickets.Remove(title);
+						parsedTickets.Add(title);
 					}
 				}
 			}
 
-			var longestTitleLength = titlesFound.Max(a => a.Name.Length) + 2;
-			var longestPublisherLength = titlesFound.Max(a => a.Publisher.Length) + 2;
-
-			PrintNumberOfTicketsFound(titlesFound, tickets);
-
-			Console.WriteLine(PrintTitleLegend(longestTitleLength, longestPublisherLength));
-
-			titlesFound = titlesFound.OrderBy(r => r.Name).ToList();
-
-			foreach (var title in titlesFound)
-			{
-				Console.WriteLine(
-					$"{title.TitleId} {title.TitleKey} | {title.Name.PadRight(longestTitleLength)}{title.Publisher.PadRight(longestPublisherLength)}{title.Region}");
-			}
-
-			Console.WriteLine("\r\nTitles which 3dsdb couldn't find but we'll look up from the Nintendo CDN:");
-
-			Console.WriteLine(PrintTitleLegend(longestTitleLength, longestPublisherLength));
-
-			var hmm = new[]
-						{
-							Convert.FromBase64String(Resources.hmm1), Convert.FromBase64String(Resources.hmm2), 
-							Convert.FromBase64String(Resources.hmm3), Convert.FromBase64String(Resources.hmm4), 
-							Convert.FromBase64String(Resources.hmm5), 
-						};
-
-			var remainingTitles = tickets.Except(titlesFound).ToList();
-			remainingTitles =
-				LookUpRemainingTitles(remainingTitles, hmm, longestTitleLength, longestPublisherLength)
-					.OrderBy(r => r.Name)
-					.ToList();
-
-			WriteOutputToFile(longestTitleLength, longestPublisherLength, titlesFound, remainingTitles);
-			WriteOutputToCsv(titlesFound, remainingTitles);
-
-			Console.Write("Done! Tickets and titles exported to ");
-			PrintColorfulLine(ConsoleColor.Green, OutputFile);
-
-			Console.Write("Detailed info exported to ");
-			PrintColorfulLine(ConsoleColor.Green, DetailedOutputFile);
-
-#if !DEBUG
-			Console.Write("Press any key to exit...");
-			Console.ReadKey();
-#endif
+			return parsedTickets;
 		}
 
 		private static List<Nintendo3DSRelease> LookUpRemainingTitles(
 			List<Nintendo3DSRelease> remainingTitles, 
-			byte[][] hmm, 
 			int titlePad, 
 			int publisherPad)
 		{
@@ -301,7 +489,7 @@
 			var countOfUnknownTitles = 0;
 
 			foreach (var downloadedTitle in
-				remainingTitles.Select(title => CDNUtils.DownloadTitleData(title.TitleId, title.TitleKey, hmm)))
+				remainingTitles.Select(title => CDNUtils.DownloadTitleData(title.TitleId, title.TitleKey)))
 			{
 				if (downloadedTitle.Name != "Unknown")
 				{
@@ -382,7 +570,7 @@
 			}
 		}
 
-		private static void PrintNumberOfTicketsFound(List<Nintendo3DSRelease> titlesFound, List<Nintendo3DSRelease> tickets)
+		private static void PrintNumberOfTicketsFound(List<Nintendo3DSRelease> titlesFound, Nintendo3DSRelease[] tickets)
 		{
 			Console.Write("Found ");
 			Console.ForegroundColor = ConsoleColor.Green;
@@ -390,7 +578,7 @@
 			Console.ResetColor();
 			Console.Write(" titles in the database, out of ");
 			Console.ForegroundColor = ConsoleColor.Green;
-			Console.Write(tickets.Count);
+			Console.Write(tickets.Length);
 			Console.ResetColor();
 			Console.WriteLine(" in the valid tickets.");
 		}
@@ -401,18 +589,27 @@
 					+ "Publisher".PadRight(longestPublisherLength) + "Region";
 		}
 
-		private static List<Nintendo3DSRelease> ParseTickets(string titleKeysPath)
+		private static Nintendo3DSRelease[] ParseTickets(Dictionary<string, string> tickets)
 		{
-			var result = new List<Nintendo3DSRelease>();
-
-			using (var titleKeyFile = new StreamReader(titleKeysPath))
+			if (tickets.Count == 0)
 			{
-				string line;
-				while ((line = titleKeyFile.ReadLine()) != null)
-				{
-					var tokens = line.Split(new[] { ": " }, StringSplitOptions.None);
-					result.Add(new Nintendo3DSRelease(null, null, null, null, null, tokens[0], tokens[1], 0));
-				}
+				tickets = ParseTickets(ValidTicketsPath);
+			}
+
+			var result = tickets.Select(ticket => new Nintendo3DSRelease(ticket.Key, ticket.Value)).ToArray();
+
+			return result;
+		}
+
+		private static Dictionary<string, string> ParseTickets(string validTicketsPath)
+		{
+			var unprocessedTickets = File.ReadAllLines(ValidTicketsPath);
+
+			var result = new Dictionary<string, string>();
+
+			foreach (var tokens in unprocessedTickets.Select(ticket => ticket.Split()))
+			{
+				result[tokens[0]] = tokens[1];
 			}
 
 			return result;
