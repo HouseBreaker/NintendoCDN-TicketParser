@@ -3,32 +3,33 @@
 	using System;
 	using System.Collections.Generic;
 	using System.IO;
+	using System.Linq;
 	using System.Net;
 	using System.Security.Cryptography;
 	using System.Text;
-
-	using NintendoCDN_TicketParser.Properties;
 
 	public static class CDNUtils
 	{
 		private static readonly byte[][] Hmm =
 			{
-				Convert.FromBase64String(Resources.hmm1), 
-				Convert.FromBase64String(Resources.hmm2), Convert.FromBase64String(Resources.hmm3), 
-				Convert.FromBase64String(Resources.hmm4), Convert.FromBase64String(Resources.hmm5), 
+				Convert.FromBase64String("SrmkDhRpdahLsbTz7O/Eew=="), 
+				Convert.FromBase64String("kKC7Hg6GSuh9E6agPSjJuA=="),
+				Convert.FromBase64String("/7tXwU6Y7Gl1s4T89AeGtQ=="), 
+				Convert.FromBase64String("gJI3mbQfNqanX7i0jJX2bw=="),
+				Convert.FromBase64String("pGmHrkfYK7T6irwEUChfpA=="), 
 			};
 
 		public static Nintendo3DSRelease DownloadTitleData(string titleId, string titleKey)
 		{
 			titleId = titleId.ToUpper();
 
-			string cndUrl = $"https://idbe-ctr.cdn.nintendo.net/icondata/10/{titleId}.idbe";
+			string metadataUrl = $"https://idbe-ctr.cdn.nintendo.net/icondata/10/{titleId}.idbe";
 			byte[] data;
 			try
 			{
 				using (var webClient = new WebClient())
 				{
-					data = webClient.DownloadData(cndUrl);
+					data = webClient.DownloadData(metadataUrl);
 				}
 			}
 			catch (WebException)
@@ -38,14 +39,14 @@
 
 			var dataMinus2 = new byte[data.Length - 2];
 			Array.Copy(data, 2, dataMinus2, 0, dataMinus2.Length);
-			var iconData = AESDecrypt(dataMinus2, Hmm[data[1]], Hmm[4]);
-			var text2 = titleId.Substring(0, 4);
+			var iconData = AesDecryptIcon(dataMinus2, Hmm[data[1]], Hmm[4]);
+			var highId = titleId.Substring(0, 4);
 
-			const string _3dsTitle = "0004";
+			const string Is3dsTitle = "0004";
 
-			if (text2 == _3dsTitle)
+			if (highId == Is3dsTitle)
 			{
-				// retrieve image
+				//// retrieve image (might get used later?)
 				// using (var memoryStream = new MemoryStream(iconData))
 				// {
 				// 	memoryStream.Seek(8272L, SeekOrigin.Begin);
@@ -56,6 +57,7 @@
 
 				// var titleIdFromData = BitConverter.ToUInt64(iconData, 32).ToString("X16");
 				var name = cleanInput(Encoding.Unicode.GetString(iconData, 208 + 512, 256));
+
 				var publisher = cleanInput(Encoding.Unicode.GetString(iconData, 464 + 512, 128));
 
 				var country = BitConverter.ToUInt32(iconData, 48);
@@ -68,21 +70,23 @@
 									{ 4, "EUR" }, // European Countries (Not used)
 									{ 8, "AUS" }, // Australia (Not used)
 									{ 12, "EUR" }, // EUR + AUS (THIS IS USED FOR CHECKS)
+									{ 15, "JPN+USA+EUR" }, // Japan + USA + Europe 
 									{ 16, "CHN" }, // China
 									{ 32, "KOR" }, // Korea
 									{ 64, "TWN" }, // Taiwan
 									{ 80, "CHN+TWN" }, // What the actual fuck?
-									{ int.MaxValue, "WLD" }, // Region Free
+									{ int.MaxValue, "ALL" }, // Region Free
 								};
 
 				var region = regions.ContainsKey(country) ? regions[country] : "Unknown";
 
 				return new Nintendo3DSRelease(name, publisher, region, titleId, titleKey);
 			}
+
 			return new Nintendo3DSRelease(titleId, titleKey);
 		}
 
-		private static byte[] AESDecrypt(byte[] Encrypted, byte[] key, byte[] iv)
+		private static byte[] AesDecryptIcon(byte[] encrypted, byte[] key, byte[] iv)
 		{
 			byte[] result;
 
@@ -92,12 +96,14 @@
 				aesManaged.IV = iv;
 				aesManaged.Padding = PaddingMode.None;
 				aesManaged.Mode = CipherMode.CBC;
+
 				var transform = aesManaged.CreateDecryptor();
+
 				using (var memoryStream = new MemoryStream())
 				{
 					using (var cryptoStream = new CryptoStream(memoryStream, transform, CryptoStreamMode.Write))
 					{
-						cryptoStream.Write(Encrypted, 0, Encrypted.Length);
+						cryptoStream.Write(encrypted, 0, encrypted.Length);
 					}
 
 					result = memoryStream.ToArray();
@@ -105,6 +111,94 @@
 			}
 
 			return result;
+		}
+
+		/// <summary>
+		/// http://stackoverflow.com/questions/17511279/c-sharp-aes-decryption
+		/// </summary>
+		private static string AesDecryptTmd(byte[] keyAndIvBytes, byte[] inputBytes)
+		{
+			string decrypted;
+
+			using (var memoryStream = new MemoryStream(inputBytes))
+			{
+				var algorithm = new AesManaged { Padding = PaddingMode.None, Mode = CipherMode.CBC };
+
+				using (
+					var cryptoStream = new CryptoStream(
+						memoryStream, 
+						algorithm.CreateDecryptor(keyAndIvBytes, keyAndIvBytes), 
+						CryptoStreamMode.Read))
+				{
+					using (var decryptor = new StreamReader(cryptoStream))
+					{
+						decrypted = decryptor.ReadToEnd();
+					}
+				}
+			}
+
+			return decrypted;
+		}
+
+		/// <summary>
+		/// offsets and other things from PlaiCDN
+		/// </summary>
+		public static bool TitleKeyIsValid(string titleId, string decTitleKey)
+		{
+			byte[] tmd;
+
+			var cdnUrl = "http://nus.cdn.c.shop.nintendowifi.net/ccs/download/" + titleId;
+
+			using (var client = new WebClient())
+			{
+				try
+				{
+					tmd = client.DownloadData(cdnUrl + "/tmd");
+				}
+				catch (WebException)
+				{
+					// likely a forbidden title (you can't download some system titles' TMD)
+					return false;
+				}
+			}
+
+			if (BitConverter.ToString(tmd.Take(4).ToArray()) != "00-01-00-04")
+			{
+				return false;
+			}
+
+			const int ContentOffset = 0xB04;
+
+			var contentId = BitConversion.BytesToHex(tmd.Skip(ContentOffset).Take(4));
+
+			byte[] result;
+
+			using (var client = new WebClient())
+			{
+				try
+				{
+					using (var stream = client.OpenRead($"{cdnUrl}/{contentId}"))
+					{
+						result = new byte[272];
+
+						var bytesRead = 0;
+						while (bytesRead <= 271)
+						{
+							result[bytesRead++] = (byte)stream.ReadByte();
+						}
+					}
+				}
+				catch (WebException)
+				{
+					return false;
+				}
+			}
+
+			var titleKeyBytes = BitConversion.HexToBytes(decTitleKey);
+
+			var decrypted = AesDecryptTmd(titleKeyBytes, result);
+
+			return decrypted.Contains("NCCH");
 		}
 	}
 }

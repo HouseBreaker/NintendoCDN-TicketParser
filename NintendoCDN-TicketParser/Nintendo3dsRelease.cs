@@ -6,6 +6,8 @@
 	// ReSharper disable once InconsistentNaming
 	public class Nintendo3DSRelease
 	{
+		private const string Unknown = "Unknown";
+
 		private string name;
 
 		private string publisher;
@@ -25,7 +27,7 @@
 			string type, 
 			string serial, 
 			string titleId, 
-			string titleKey, 
+			string decTitleKey, 
 			int? sizeInMegabytes)
 		{
 			this.Name = name;
@@ -34,11 +36,11 @@
 			this.Type = type;
 			this.Serial = serial;
 			this.TitleId = titleId;
-			this.TitleKey = titleKey;
+			this.DecTitleKey = decTitleKey;
 			this.SizeInMegabytes = sizeInMegabytes;
 		}
 
-		public Nintendo3DSRelease(string name, string publisher, string region, string titleId, string titleKey)
+		public Nintendo3DSRelease(string name, string publisher, string region, string titleId, string decTitleKey)
 		{
 			this.Name = name;
 			this.Publisher = publisher;
@@ -46,11 +48,11 @@
 			this.Type = null;
 			this.Serial = null;
 			this.TitleId = titleId;
-			this.TitleKey = titleKey;
+			this.DecTitleKey = decTitleKey;
 			this.SizeInMegabytes = 0;
 		}
 
-		public Nintendo3DSRelease(string titleId, string titleKey)
+		public Nintendo3DSRelease(string titleId, string decTitleKey)
 		{
 			this.Name = null;
 			this.Publisher = null;
@@ -58,7 +60,7 @@
 			this.Type = null;
 			this.Serial = null;
 			this.TitleId = titleId;
-			this.TitleKey = titleKey;
+			this.DecTitleKey = decTitleKey;
 			this.SizeInMegabytes = null;
 		}
 
@@ -71,7 +73,7 @@
 
 			set
 			{
-				this.name = value ?? "Unknown";
+				this.name = value ?? Unknown;
 			}
 		}
 
@@ -84,7 +86,7 @@
 
 			set
 			{
-				this.publisher = value ?? "Unknown";
+				this.publisher = value ?? Unknown;
 			}
 		}
 
@@ -97,7 +99,7 @@
 
 			set
 			{
-				this.region = value ?? "Unknown";
+				this.region = value ?? Unknown;
 			}
 		}
 
@@ -110,7 +112,7 @@
 
 			set
 			{
-				this.type = value ?? "Unknown";
+				this.type = value ?? Unknown;
 			}
 		}
 
@@ -123,13 +125,13 @@
 
 			set
 			{
-				this.serial = value ?? "Unknown";
+				this.serial = value ?? Unknown;
 			}
 		}
 
 		public string TitleId { get; }
 
-		public string TitleKey { get; }
+		public string DecTitleKey { get; }
 
 		public int? SizeInMegabytes
 		{

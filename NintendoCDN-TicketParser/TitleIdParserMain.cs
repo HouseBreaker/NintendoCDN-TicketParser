@@ -1,4 +1,5 @@
-﻿namespace NintendoCDN_TicketParser
+﻿// ReSharper disable InconsistentNaming
+namespace NintendoCDN_TicketParser
 {
 	using System;
 	using System.Collections.Generic;
@@ -6,26 +7,14 @@
 	using System.Linq;
 	using System.Net;
 	using System.Reflection;
+	using System.Security.Cryptography;
 	using System.Text;
 	using System.Xml.Linq;
 
-	// todo: put all of this into its own classes because it's terrifying to look at
-	public class TitleIdParserMain
+	using NintendoCDN_TicketParser.Resources;
+
+	public static class TitleIdParserMain
 	{
-		private const string ValidTicketsPath = "ValidTickets.txt";
-
-		private const string DecryptedTitleKeysPath = "decTitleKeys.bin";
-
-		private const string _3dsDbPath = "3dsreleases.xml";
-
-		private const string GroovyCiaPath = "community.xml";
-
-		private const string DecTitleKeysPath = "decTitleKeys.bin";
-
-		private const string OutputFile = "output.txt";
-
-		private const string DetailedOutputFile = "output.csv";
-
 		public static void Main(string[] args)
 		{
 			ServicePointManager.ServerCertificateValidationCallback = (sender, certificate, chain, sslPolicyErrors) => true;
@@ -33,33 +22,44 @@
 
 			try
 			{
-				var assemblyName = Assembly.GetExecutingAssembly().GetName();
-				var majorVersion = assemblyName.Version.Major;
-				var minorVersion = assemblyName.Version.Minor;
+				PrintProgramVersion();
 
-				Console.WriteLine($"{assemblyName.Name} v{majorVersion}.{minorVersion}");
+				ProcessArgs(args);
 
-				if (args != null && args.Contains("-h"))
+				if (!File.Exists(Files.DecTitleKeysPath))
 				{
-					PrintColorfulLine(ConsoleColor.Yellow, "HELP:");
-					Console.WriteLine();
-					Console.WriteLine("This utility checks your decrypted 3ds tickets from decTitleKeys.bin.");
-					Console.WriteLine(
-						"After validating them, it checks them against the 3dsdb.com and FunkyCIA databases and shows you");
-					Console.WriteLine("the title names along with info about them.");
-					Console.WriteLine();
-					Console.WriteLine(
-						"You can obtain your decTitleKeys.bin from Decrypt9, using the option \"Titlekey Decrypt Options\".");
-					Console.Write("Press any key to exit...");
-					Console.ReadKey();
-					Environment.Exit(0);
-				}
-
-				if (!File.Exists(DecTitleKeysPath))
-				{
-					PrintColorfulLine(ConsoleColor.Red, "decTitleKeys.bin not found! Get it from Decrypt9. Press any key to exit.");
+					ConsoleUtils.PrintColorfulLine(
+						ConsoleColor.Red, 
+						"decTitleKeys.bin not found! Get it from Decrypt9. Press any key to exit.");
 					Console.ReadKey();
 					Environment.Exit(1);
+				}
+
+				var decTitleKeysFile = File.ReadAllBytes(Files.DecTitleKeysPath);
+				var computedHash = BitConversion.BytesToHex(MD5.Create().ComputeHash(decTitleKeysFile));
+
+				var shouldRecheck = false;
+
+				if (!File.Exists(Files.DecTitleKeysMd5))
+				{
+					File.WriteAllText(Files.DecTitleKeysMd5, computedHash);
+				}
+				else
+				{
+					var savedHash = File.ReadAllText(Files.DecTitleKeysMd5);
+
+					if (savedHash != computedHash)
+					{
+						Console.WriteLine("Different decTitleKeys.bin found!");
+						Console.Write("Recheck titles? y/n: ");
+
+						var keyChosen = Console.ReadKey().Key;
+						if (keyChosen == ConsoleKey.Y)
+						{
+							shouldRecheck = true;
+							File.WriteAllText(Files.DecTitleKeysMd5, computedHash);
+						}
+					}
 				}
 
 				if (args != null && args.Contains("-update"))
@@ -68,45 +68,26 @@
 				}
 				else
 				{
-					if (!File.Exists(_3dsDbPath))
-					{
-						Console.WriteLine("3DS titles database not found! Downloading...");
-						Download3DSDatabase();
-					}
-					else
-					{
-						var dateOfDatabase = File.GetLastWriteTime(_3dsDbPath);
-						Console.WriteLine($"3DS titles database last updated at {dateOfDatabase}");
-					}
-
-					if (!File.Exists(GroovyCiaPath))
-					{
-						Console.WriteLine("GroovyCIA database not found! Downloading...");
-						DownloadGroovyCiaDatabase();
-					}
-					else
-					{
-						var dateOfDatabase = File.GetLastWriteTime(GroovyCiaPath);
-						Console.WriteLine($"3DS titles database last updated at {dateOfDatabase}");
-					}
+					Files.CheckFor3dsDb();
+					Files.CheckForGroovyCiaDb();
 				}
 
 				var tickets = new Dictionary<string, string>();
 
-				if (!File.Exists(ValidTicketsPath) || new FileInfo(ValidTicketsPath).Length == 0)
+				if ((!File.Exists(Files.ValidTicketsPath) || new FileInfo(Files.ValidTicketsPath).Length == 0) || shouldRecheck)
 				{
-					Console.WriteLine("Valid tickets not found! Generating...");
+					Console.WriteLine("Decoding valid tickets...");
 					tickets = DecodeTickets();
 					var ticketsAsStrings = tickets.Select(ticket => ticket.Key + " " + ticket.Value).ToList();
 
-					File.WriteAllText(ValidTicketsPath, string.Join(Environment.NewLine, ticketsAsStrings));
+					File.WriteAllText(Files.ValidTicketsPath, string.Join(Environment.NewLine, ticketsAsStrings));
 					Console.WriteLine("Wrote valid tickets to ValidTickets.txt");
 				}
 
 				var parsedTickets = ParseTickets(tickets).ToArray();
 
-				var titlesFound = ParseTicketsFromGroovyCiaDb(parsedTickets, GroovyCiaPath);
-				titlesFound = ParseTicketsFrom3dsDb(titlesFound);
+				var titlesFound = ParseTicketsFromGroovyCiaDb(parsedTickets, Files.GroovyCiaPath);
+				titlesFound = ParseTicketsFrom3DsDb(titlesFound);
 
 				var longestTitleLength = titlesFound.Max(a => a.Name.Length) + 2;
 				var longestPublisherLength = titlesFound.Max(a => a.Publisher.Length) + 2;
@@ -115,12 +96,14 @@
 
 				Console.WriteLine(PrintTitleLegend(longestTitleLength, longestPublisherLength));
 
-				titlesFound = titlesFound.OrderBy(r => r.Name).ToList();
-
+				// titlesFound = titlesFound.OrderBy(r => Nintendo3DSRelease.GetTitleType(r.TitleId)).ThenBy(r => r.Name).ToList();
 				foreach (var title in titlesFound)
 				{
+					var fullWidthExtraPadName = GetFullWidthExtraPad(title.Name);
+					var fullWidthExtraPadPublisher = GetFullWidthExtraPad(title.Publisher);
+
 					Console.WriteLine(
-						$"{title.TitleId} {title.TitleKey} | {title.Name.PadRight(longestTitleLength)}{title.Publisher.PadRight(longestPublisherLength)}{title.Region}");
+						$"{title.TitleId} {title.DecTitleKey} | {title.Name.PadRight(longestTitleLength - fullWidthExtraPadName)}{title.Publisher.PadRight(longestPublisherLength - fullWidthExtraPadPublisher)}{title.Region}");
 				}
 
 				Console.WriteLine(
@@ -130,16 +113,19 @@
 
 				var remainingTitles = parsedTickets.Except(titlesFound).ToList();
 				remainingTitles =
-					LookUpRemainingTitles(remainingTitles, longestTitleLength, longestPublisherLength).OrderBy(r => r.Name).ToList();
+					LookUpRemainingTitles(remainingTitles, longestTitleLength, longestPublisherLength)
+						.OrderBy(r => Nintendo3DSRelease.GetTitleType(r.TitleId))
+						.ThenBy(r => r.Name)
+						.ToList();
 
 				WriteOutputToFile(longestTitleLength, longestPublisherLength, titlesFound, remainingTitles);
 				WriteOutputToCsv(titlesFound, remainingTitles);
 
 				Console.Write("Done! Tickets and titles exported to ");
-				PrintColorfulLine(ConsoleColor.Green, OutputFile);
+				ConsoleUtils.PrintColorfulLine(ConsoleColor.Green, Files.OutputFile);
 
 				Console.Write("Detailed info exported to ");
-				PrintColorfulLine(ConsoleColor.Green, DetailedOutputFile);
+				ConsoleUtils.PrintColorfulLine(ConsoleColor.Green, Files.DetailedOutputFile);
 
 #if !DEBUG
 			Console.Write("Press any key to exit...");
@@ -148,21 +134,77 @@
 			}
 			catch (Exception ex)
 			{
-				PrintColorfulLine(ConsoleColor.Red, "Fatal Error: " + ex.Message);
+				ConsoleUtils.PrintColorfulLine(ConsoleColor.Red, "Fatal Error: " + ex.Message);
 #if DEBUG
 				Console.WriteLine(ex.StackTrace);
 #endif
 			}
 		}
 
+		private static int GetFullWidthExtraPad(string name)
+		{
+			var fullWidthPadding = 0;
+
+			foreach (var letter in name)
+			{
+				for (int i = '\u2E80'; i < '\uA48C'; i++)
+				{
+					if (letter == i)
+					{
+						fullWidthPadding++;
+						break;
+					}
+				}
+
+				for (int i = '\uFF00'; i < '\uFFEF'; i++)
+				{
+					if (letter == i)
+					{
+						fullWidthPadding++;
+						break;
+					}
+				}
+			}
+
+			return fullWidthPadding;
+		}
+
+		private static void ProcessArgs(string[] args)
+		{
+			if (args != null && args.Contains("-h"))
+			{
+				ConsoleUtils.PrintColorfulLine(ConsoleColor.Yellow, "HELP:");
+				Console.WriteLine();
+				Console.WriteLine("This utility checks your decrypted 3ds tickets from decTitleKeys.bin.");
+				Console.WriteLine(
+					"After validating them, it checks them against the 3dsdb.com and FunkyCIA databases and shows you");
+				Console.WriteLine("the title names along with info about them.");
+				Console.WriteLine();
+				Console.WriteLine(
+					"You can obtain your decTitleKeys.bin from Decrypt9, using the option \"Titlekey Decrypt Options\".");
+				Console.Write("Press any key to exit...");
+				Console.ReadKey();
+				Environment.Exit(0);
+			}
+		}
+
+		private static void PrintProgramVersion()
+		{
+			var assemblyName = Assembly.GetExecutingAssembly().GetName();
+			var majorVersion = assemblyName.Version.Major;
+			var minorVersion = assemblyName.Version.Minor;
+
+			Console.WriteLine($"{assemblyName.Name} v{majorVersion}.{minorVersion}");
+		}
+
 		private static void UpdateDependencies()
 		{
 			Console.WriteLine("Update option chosen.");
 			Console.WriteLine("Updating 3DS Database from 3dsdb.com...");
-			Download3DSDatabase();
+			Databases.Download3DsDatabase();
 
 			Console.WriteLine("Updating GroovyCIA database from http://ptrk25.github.io/GroovyFX/database/community.xml...");
-			Download3DSDatabase();
+			Databases.DownloadGroovyCiaDatabase();
 
 			Console.Write("Press C to recheck titles or any other key to exit...");
 
@@ -173,61 +215,13 @@
 			}
 		}
 
-		private static void PrintColorful(ConsoleColor color, object message)
-		{
-			Console.ForegroundColor = color;
-			Console.Write(message);
-			Console.ResetColor();
-		}
-
-		private static void PrintColorfulLine(ConsoleColor color, object message)
-		{
-			Console.ForegroundColor = color;
-			Console.WriteLine(message);
-			Console.ResetColor();
-		}
-
-		private static void DownloadGroovyCiaDatabase()
-		{
-			const string dbAddress = "http://ptrk25.github.io/GroovyFX/database/community.xml";
-			using (var client = new WebClient())
-			{
-				try
-				{
-					client.DownloadFile(dbAddress, GroovyCiaPath);
-				}
-				catch (WebException ex)
-				{
-					PrintColorfulLine(ConsoleColor.Red, "Could not download the GroovyCIA database. Error: " + ex.Message);
-				}
-			}
-
-			PrintColorfulLine(ConsoleColor.Green, "GroovyCIA database downloaded!");
-		}
-
-		private static void Download3DSDatabase()
-		{
-			const string dbAddress = @"http://3dsdb.com/xml.php";
-			using (var client = new WebClient())
-			{
-				try
-				{
-					client.DownloadFile(dbAddress, _3dsDbPath);
-				}
-				catch (WebException ex)
-				{
-					PrintColorfulLine(ConsoleColor.Red, "Could not download the 3ds database. Error: " + ex.Message);
-				}
-			}
-
-			PrintColorfulLine(ConsoleColor.Green, "3DS database downloaded!");
-		}
-
 		private static Dictionary<string, string> DecodeTickets()
 		{
 			Console.Write("Checking Title Keys validity against Nintendo CDN.");
-			PrintColorfulLine(ConsoleColor.Green, " This might take a while...");
-			PrintColorfulLine(ConsoleColor.Green, "Parsing only Games and Addon DLCs");
+			ConsoleUtils.PrintColorfulLine(ConsoleColor.Green, " This might take a while...");
+			ConsoleUtils.PrintColorfulLine(
+				ConsoleColor.Green, 
+				"Parsing only Games and Addon DLCs. Ticket count might decrease as we weed out invalid tickets.");
 
 			Func<string, bool> gameOrDlc =
 				titleId =>
@@ -236,7 +230,9 @@
 
 			var ticketsDictionary = ParseDecTitleKeysBin();
 
-			ticketsDictionary = ticketsDictionary.Where(a => gameOrDlc(a.Key)).ToDictionary(a => a.Key, a => a.Value);
+			ticketsDictionary =
+				new SortedDictionary<string, string>(
+					ticketsDictionary.Where(a => gameOrDlc(a.Key)).ToDictionary(a => a.Key, a => a.Value));
 
 			var validKeys = new Dictionary<string, string>();
 
@@ -248,14 +244,14 @@
 				var titleId = pair.Key;
 				var titleKey = pair.Value;
 
-				var valid = TitleKeyIsValid(titleId, titleKey);
+				var valid = CDNUtils.TitleKeyIsValid(titleId, titleKey);
 
 				if (valid)
 				{
 					validKeys[titleId] = titleKey;
-					const int TitleTypePad = 25;
+					const int TitleTypePad = 10;
 					Console.Write('\r' + Nintendo3DSRelease.GetTitleType(titleId).PadRight(TitleTypePad) + pair.Key + ": Valid | ");
-					PrintColorful(ConsoleColor.Green, $"({++processedTickets}/{totalTickets} valid)");
+					ConsoleUtils.PrintColorful(ConsoleColor.Green, $"({++processedTickets}/{totalTickets} valid)");
 				}
 				else
 				{
@@ -266,30 +262,29 @@
 			Console.WriteLine();
 
 			Console.Write("Found ");
-			PrintColorful(ConsoleColor.Green, ticketsDictionary.Count - totalTickets);
+			ConsoleUtils.PrintColorful(ConsoleColor.Green, ticketsDictionary.Count - totalTickets);
 			Console.WriteLine(" invalid tickets. Searching through databases for the valid ones...");
 
 			return validKeys;
 		}
 
-		private static Dictionary<string, string> ParseDecTitleKeysBin()
+		private static SortedDictionary<string, string> ParseDecTitleKeysBin()
 		{
-			var ticketsDictionary = new Dictionary<string, string>();
+			var ticketsDictionary = new SortedDictionary<string, string>();
 
-			using (var reader = new BinaryReader(new FileStream(DecryptedTitleKeysPath, FileMode.Open, FileAccess.Read)))
+			using (var reader = new BinaryReader(new FileStream(Files.DecryptedTitleKeysPath, FileMode.Open, FileAccess.Read)))
 			{
-				var numberOfKeys = new FileInfo(DecryptedTitleKeysPath).Length / 32;
+				var numberOfKeys = new FileInfo(Files.DecryptedTitleKeysPath).Length / 32;
 
 				reader.ReadBytes(16); // seek in
 
 				for (var entry = 0; entry < numberOfKeys; entry++)
 				{
 					reader.ReadBytes(8); // skip 8 bytes
-					var titleId = BitConverter.ToString(reader.ReadBytes(8)).Replace("-", string.Empty);
-					var titleKey = BitConverter.ToString(reader.ReadBytes(16)).Replace("-", string.Empty);
 
-					// var pair = BitConverter.ToString(titleId) + ": " + BitConverter.ToString(titleKey);
-					// tickets.Add(pair);
+					var titleId = BitConversion.BytesToHex(reader.ReadBytes(8));
+					var titleKey = BitConversion.BytesToHex(reader.ReadBytes(16));
+
 					ticketsDictionary[titleId] = titleKey;
 				}
 			}
@@ -297,78 +292,11 @@
 			return ticketsDictionary;
 		}
 
-		/// <summary>
-		/// offsets and other things from PlaiCDN
-		/// </summary>
-		private static bool TitleKeyIsValid(string titleId, string titleKey)
-		{
-			byte[] tmd;
-
-			var cdnUrl = "http://nus.cdn.c.shop.nintendowifi.net/ccs/download/" + titleId;
-
-			using (var client = new WebClient())
-			{
-				try
-				{
-					tmd = client.DownloadData(cdnUrl + "/tmd");
-				}
-				catch (WebException)
-				{
-					return false;
-				}
-			}
-
-			if (BitConverter.ToString(tmd.Take(4).ToArray()) != "00-01-00-04")
-			{
-				return false;
-			}
-
-			const int contentOffset = 0xB04;
-
-			var contentId = BitConverter.ToString(tmd.Skip(contentOffset).Take(4).ToArray()).Replace("-", string.Empty);
-
-			byte[] result;
-
-			using (var client = new WebClient())
-			{
-				try
-				{
-					using (var stream = client.OpenRead($"{cdnUrl}/{contentId}"))
-					{
-						result = new byte[272];
-
-						var bytesRead = 0;
-						while (bytesRead <= 271)
-						{
-							result[bytesRead++] = (byte)stream.ReadByte();
-						}
-					}
-				}
-				catch (WebException)
-				{
-					return false;
-				}
-			}
-
-			Func<string, byte[]> hexStringToByte =
-				hex =>
-				Enumerable.Range(0, hex.Length)
-					.Where(x => x % 2 == 0)
-					.Select(x => Convert.ToByte(hex.Substring(x, 2), 16))
-					.ToArray();
-
-			var titleKeyBytes = hexStringToByte(titleKey);
-
-			var decrypted = EncryptionHelper.AesDecrypt(titleKeyBytes, result);
-
-			return decrypted.Contains("NCCH");
-		}
-
 		private static List<Nintendo3DSRelease> ParseTicketsFromGroovyCiaDb(
 			Nintendo3DSRelease[] parsedTickets, 
 			string groovyCiaPath)
 		{
-			PrintColorfulLine(ConsoleColor.Green, "Checking Title IDs against GroovyCIA database");
+			ConsoleUtils.PrintColorfulLine(ConsoleColor.Green, "Checking Title IDs against GroovyCIA database");
 			var xmlFile = XElement.Load(groovyCiaPath);
 			var titlesFound = new List<Nintendo3DSRelease>();
 
@@ -394,7 +322,7 @@
 					var region = titleData("region");
 					var serial = titleData("serial");
 
-					var foundTicket = new Nintendo3DSRelease(name, null, region, null, serial, titleId, title.TitleKey, null);
+					var foundTicket = new Nintendo3DSRelease(name, null, region, null, serial, titleId, title.DecTitleKey, null);
 
 					if (!titlesFound.Exists(a => Equals(a, foundTicket)))
 					{
@@ -406,13 +334,20 @@
 			return titlesFound;
 		}
 
-		private static List<Nintendo3DSRelease> ParseTicketsFrom3dsDb(List<Nintendo3DSRelease> parsedTickets)
+		private static List<Nintendo3DSRelease> ParseTicketsFrom3DsDb(List<Nintendo3DSRelease> parsedTickets)
 		{
-			PrintColorfulLine(ConsoleColor.Green, "Checking Title IDs against 3dsdb.com database");
-			var xmlFile = XElement.Load(_3dsDbPath);
+			ConsoleUtils.PrintColorfulLine(ConsoleColor.Green, "Checking Title IDs against 3dsdb.com database");
+			var xmlFile = XElement.Load(Files.Nintendo3DsDbPath);
 
-			foreach (XElement titleInfo in xmlFile.Nodes())
+			foreach (var xNode in xmlFile.Nodes())
 			{
+				var titleInfo = xNode as XElement;
+
+				if (titleInfo == null)
+				{
+					continue;
+				}
+
 				Func<string, string> titleData = tag => titleInfo.Element(tag).Value.Trim();
 				var titleId = titleData("titleid");
 
@@ -454,7 +389,7 @@
 						type, 
 						title.Serial, 
 						titleId, 
-						title.TitleKey, 
+						title.DecTitleKey, 
 						sizeInMegabytes);
 
 					if (!parsedTickets.Exists(a => Equals(a, foundTicket)))
@@ -488,8 +423,9 @@
 
 			var countOfUnknownTitles = 0;
 
-			foreach (var downloadedTitle in
-				remainingTitles.Select(title => CDNUtils.DownloadTitleData(title.TitleId, title.TitleKey)))
+			foreach (
+				var downloadedTitle in remainingTitles.Select(title => CDNUtils.DownloadTitleData(title.TitleId, title.DecTitleKey))
+				)
 			{
 				if (downloadedTitle.Name != "Unknown")
 				{
@@ -503,6 +439,8 @@
 				}
 			}
 
+			Console.WriteLine();
+
 			foreach (var unknownTitle in unknownTitles)
 			{
 				Console.WriteLine(TitleInfo(unknownTitle, titlePad, publisherPad));
@@ -514,8 +452,11 @@
 
 		private static string TitleInfo(Nintendo3DSRelease title, int titlePad, int publisherPad)
 		{
+			var fullWidthExtraPadName = GetFullWidthExtraPad(title.Name);
+			var fullWidthExtraPadPublisher = GetFullWidthExtraPad(title.Publisher);
+
 			return
-				$"{title.TitleId} {title.TitleKey.PadRight(32)} | {title.Name.PadRight(titlePad)}{title.Publisher.PadRight(publisherPad)}{title.Region}";
+				$"{title.TitleId} {title.DecTitleKey.PadRight(32)} | {title.Name.PadRight(titlePad - fullWidthExtraPadName)}{title.Publisher.PadRight(publisherPad - fullWidthExtraPadPublisher)}{title.Region}";
 		}
 
 		private static void WriteOutputToFile(
@@ -524,46 +465,48 @@
 			List<Nintendo3DSRelease> titlesFound, 
 			List<Nintendo3DSRelease> remainingTitles)
 		{
-			using (var writer = new StreamWriter(OutputFile))
+			var sb = new StringBuilder();
+
+			sb.AppendLine(PrintTitleLegend(titlePad, publisherPad));
+			foreach (var title in titlesFound)
 			{
-				var sb = new StringBuilder();
+				sb.AppendLine(TitleInfo(title, titlePad, publisherPad));
+			}
 
-				sb.AppendLine(PrintTitleLegend(titlePad, publisherPad));
-				foreach (var title in titlesFound)
-				{
-					sb.AppendLine(TitleInfo(title, titlePad, publisherPad));
-				}
+			sb.AppendLine("\r\nTitles which 3dsdb couldn't find but are valid against the Nintendo CDN:");
 
-				sb.AppendLine("\r\nTitles which 3dsdb couldn't find but are valid against the Nintendo CDN:");
+			sb.AppendLine(PrintTitleLegend(titlePad, publisherPad));
+			foreach (var title in remainingTitles)
+			{
+				sb.AppendLine(TitleInfo(title, titlePad, publisherPad));
+			}
 
-				sb.AppendLine(PrintTitleLegend(titlePad, publisherPad));
-				foreach (var title in remainingTitles)
-				{
-					sb.AppendLine(TitleInfo(title, titlePad, publisherPad));
-				}
-
+			using (var writer = new StreamWriter(Files.OutputFile))
+			{
 				writer.Write(sb.ToString().TrimEnd());
 			}
 		}
 
-		private static void WriteOutputToCsv(List<Nintendo3DSRelease> titlesFound, List<Nintendo3DSRelease> remainingTitles)
+		private static void WriteOutputToCsv(
+			IEnumerable<Nintendo3DSRelease> titlesFound, 
+			IEnumerable<Nintendo3DSRelease> remainingTitles)
 		{
-			using (var writer = new StreamWriter(DetailedOutputFile, false, Encoding.UTF8))
+			using (var writer = new StreamWriter(Files.DetailedOutputFile, false, Encoding.UTF8))
 			{
 				var sb = new StringBuilder();
 
-				sb.AppendLine("Title ID,Title Key,Name,Publisher,Region,Type,Serial,Size");
-				Func<Nintendo3DSRelease, string> DetailedCSVInfo =
-					r => $"{r.TitleId},{r.TitleKey},{r.Name},{r.Publisher},{r.Region},{r.Type},{r.Serial},{r.SizeInMegabytes}MB";
+				sb.AppendLine("Title ID,Decrypted Title Key,Name,Publisher,Region,Type,Serial,Size");
+				Func<Nintendo3DSRelease, string> detailedCsvInfo =
+					r => $"{r.TitleId},{r.DecTitleKey},{r.Name},{r.Publisher},{r.Region},{r.Type},{r.Serial},{r.SizeInMegabytes}MB";
 
 				foreach (var title in titlesFound)
 				{
-					sb.AppendLine(DetailedCSVInfo(title));
+					sb.AppendLine(detailedCsvInfo(title));
 				}
 
 				foreach (var title in remainingTitles)
 				{
-					sb.AppendLine(DetailedCSVInfo(title));
+					sb.AppendLine(detailedCsvInfo(title));
 				}
 
 				writer.Write(sb.ToString().TrimEnd());
@@ -585,7 +528,7 @@
 
 		private static string PrintTitleLegend(int longestTitleLength, int longestPublisherLength)
 		{
-			return "TitleID".PadRight(16 + 1) + "Title Key".PadRight(32 + 3) + "Name".PadRight(longestTitleLength)
+			return "TitleID".PadRight(16 + 1) + "Decrypted Title Key".PadRight(32 + 3) + "Name".PadRight(longestTitleLength)
 					+ "Publisher".PadRight(longestPublisherLength) + "Region";
 		}
 
@@ -593,7 +536,7 @@
 		{
 			if (tickets.Count == 0)
 			{
-				tickets = ParseTickets(ValidTicketsPath);
+				tickets = ParseTickets();
 			}
 
 			var result = tickets.Select(ticket => new Nintendo3DSRelease(ticket.Key, ticket.Value)).ToArray();
@@ -601,9 +544,9 @@
 			return result;
 		}
 
-		private static Dictionary<string, string> ParseTickets(string validTicketsPath)
+		private static Dictionary<string, string> ParseTickets()
 		{
-			var unprocessedTickets = File.ReadAllLines(ValidTicketsPath);
+			var unprocessedTickets = File.ReadAllLines(Files.ValidTicketsPath);
 
 			var result = new Dictionary<string, string>();
 
