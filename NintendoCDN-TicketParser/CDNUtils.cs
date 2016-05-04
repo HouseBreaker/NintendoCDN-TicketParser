@@ -2,6 +2,7 @@
 {
 	using System;
 	using System.Collections.Generic;
+	using System.Diagnostics;
 	using System.IO;
 	using System.Linq;
 	using System.Net;
@@ -13,17 +14,16 @@
 		private static readonly byte[][] Hmm =
 			{
 				Convert.FromBase64String("SrmkDhRpdahLsbTz7O/Eew=="), 
-				Convert.FromBase64String("kKC7Hg6GSuh9E6agPSjJuA=="),
-				Convert.FromBase64String("/7tXwU6Y7Gl1s4T89AeGtQ=="), 
-				Convert.FromBase64String("gJI3mbQfNqanX7i0jJX2bw=="),
-				Convert.FromBase64String("pGmHrkfYK7T6irwEUChfpA=="), 
+				Convert.FromBase64String("kKC7Hg6GSuh9E6agPSjJuA=="), Convert.FromBase64String("/7tXwU6Y7Gl1s4T89AeGtQ=="), 
+				Convert.FromBase64String("gJI3mbQfNqanX7i0jJX2bw=="), Convert.FromBase64String("pGmHrkfYK7T6irwEUChfpA=="), 
 			};
 
 		public static Nintendo3DSRelease DownloadTitleData(string titleId, string titleKey)
 		{
 			titleId = titleId.ToUpper();
 
-			string metadataUrl = $"https://idbe-ctr.cdn.nintendo.net/icondata/10/{titleId}.idbe";
+			string metadataUrl = $"https://idbe-ctr.cdn.nintendo.net/icondata/{10}/{titleId}.idbe";
+
 			byte[] data;
 			try
 			{
@@ -32,14 +32,17 @@
 					data = webClient.DownloadData(metadataUrl);
 				}
 			}
-			catch (WebException)
+			catch (WebException ex)
 			{
 				return new Nintendo3DSRelease(titleId, titleKey);
 			}
 
-			var dataMinus2 = new byte[data.Length - 2];
-			Array.Copy(data, 2, dataMinus2, 0, dataMinus2.Length);
-			var iconData = AesDecryptIcon(dataMinus2, Hmm[data[1]], Hmm[4]);
+			var dataSkip2 = data.Skip(2).ToArray();
+			var keyslot = data[1];
+			var key = Hmm[keyslot];
+			var iv = Hmm[4];
+
+			var iconData = AesDecryptIcon(dataSkip2, key, iv);
 			var highId = titleId.Substring(0, 4);
 
 			const string Is3dsTitle = "0004";
@@ -62,23 +65,26 @@
 
 				var country = BitConverter.ToUInt32(iconData, 48);
 
-				// <3 Shadowhand
 				var regions = new Dictionary<uint, string>
 								{
-									{ 1, "JPN" }, // Japan
-									{ 2, "USA" }, // North America
-									{ 4, "EUR" }, // European Countries (Not used)
-									{ 8, "AUS" }, // Australia (Not used)
-									{ 12, "EUR" }, // EUR + AUS (THIS IS USED FOR CHECKS)
-									{ 15, "JPN+USA+EUR" }, // Japan + USA + Europe 
-									{ 16, "CHN" }, // China
-									{ 32, "KOR" }, // Korea
-									{ 64, "TWN" }, // Taiwan
-									{ 80, "CHN+TWN" }, // What the actual fuck?
-									{ int.MaxValue, "ALL" }, // Region Free
+									{ 0x01, "JPN" }, 
+									{ 0x02, "USA" }, 
+									{ 0x04 | 0x08, "EUR" }, 
+									{ 0x10, "CHN" }, 
+									{ 0x20, "KOR" }, 
+									{ 0x40, "TWN" }, 
 								};
 
-				var region = regions.ContainsKey(country) ? regions[country] : "Unknown";
+				string region;
+				if (country == int.MaxValue)
+				{
+					region = "ALL";
+				}
+				else
+				{
+					var validRegions = regions.Where(a => (country & a.Key) != 0).Select(a => a.Value);
+					region = string.Join("+", validRegions);
+				}
 
 				return new Nintendo3DSRelease(name, publisher, region, titleId, titleKey);
 			}
@@ -167,9 +173,13 @@
 				return false;
 			}
 
-			const int ContentOffset = 0xB04;
+			// const int ContentOffset = 0xB04;
+			// var contentId = BitConversion.BytesToHex(tmd.Skip(ContentOffset).Take(4));
 
-			var contentId = BitConversion.BytesToHex(tmd.Skip(ContentOffset).Take(4));
+			// const int TikOffset = 0x140;
+			// var contentCount = Convert.ToInt32(BitConversion.BytesToHex(tmd.Skip(TikOffset + 0x9E).Take(2)), 16);
+			var cOffs = 0xB04 + 0x30;
+			var contentId = BitConversion.BytesToHex(tmd.Skip(cOffs).Take(4));
 
 			byte[] result;
 
@@ -182,7 +192,7 @@
 						result = new byte[272];
 
 						var bytesRead = 0;
-						while (bytesRead <= 271)
+						while (bytesRead < 272)
 						{
 							result[bytesRead++] = (byte)stream.ReadByte();
 						}

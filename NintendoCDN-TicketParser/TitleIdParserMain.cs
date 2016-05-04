@@ -19,17 +19,19 @@ namespace NintendoCDN_TicketParser
 		{
 			ServicePointManager.ServerCertificateValidationCallback = (sender, certificate, chain, sslPolicyErrors) => true;
 			Console.OutputEncoding = Encoding.UTF8;
-
+#if !DEBUG
 			try
 			{
+#endif
 				PrintProgramVersion();
+
 
 				ProcessArgs(args);
 
 				if (!File.Exists(Files.DecTitleKeysPath))
 				{
 					ConsoleUtils.PrintColorfulLine(
-						ConsoleColor.Red, 
+						ConsoleColor.Red,
 						"decTitleKeys.bin not found! Get it from Decrypt9. Press any key to exit.");
 					Console.ReadKey();
 					Environment.Exit(1);
@@ -127,19 +129,22 @@ namespace NintendoCDN_TicketParser
 				Console.Write("Detailed info exported to ");
 				ConsoleUtils.PrintColorfulLine(ConsoleColor.Green, Files.DetailedOutputFile);
 
+				// #if !DEBUG
+				Console.Write("Press any key to exit...");
+				Console.ReadKey();
+				// #endif
 #if !DEBUG
-			Console.Write("Press any key to exit...");
-			Console.ReadKey();
-#endif
 			}
+
 			catch (Exception ex)
 			{
 				ConsoleUtils.PrintColorfulLine(ConsoleColor.Red, "Fatal Error: " + ex.Message);
-#if DEBUG
+
 				Console.WriteLine(ex.StackTrace);
-#endif
 			}
+#endif
 		}
+
 
 		private static int GetFullWidthExtraPad(string name)
 		{
@@ -220,7 +225,7 @@ namespace NintendoCDN_TicketParser
 			Console.Write("Checking Title Keys validity against Nintendo CDN.");
 			ConsoleUtils.PrintColorfulLine(ConsoleColor.Green, " This might take a while...");
 			ConsoleUtils.PrintColorfulLine(
-				ConsoleColor.Green, 
+				ConsoleColor.Green,
 				"Parsing only Games and Addon DLCs. Ticket count might decrease as we weed out invalid tickets.");
 
 			Func<string, bool> gameOrDlc =
@@ -293,7 +298,7 @@ namespace NintendoCDN_TicketParser
 		}
 
 		private static List<Nintendo3DSRelease> ParseTicketsFromGroovyCiaDb(
-			Nintendo3DSRelease[] parsedTickets, 
+			Nintendo3DSRelease[] parsedTickets,
 			string groovyCiaPath)
 		{
 			ConsoleUtils.PrintColorfulLine(ConsoleColor.Green, "Checking Title IDs against GroovyCIA database");
@@ -383,13 +388,13 @@ namespace NintendoCDN_TicketParser
 					var sizeInMegabytes = Convert.ToInt32(decimal.Parse(titleData("trimmedsize")) / (int)Math.Pow(2, 20));
 
 					var foundTicket = new Nintendo3DSRelease(
-						title.Name, 
-						publisher, 
-						title.Region, 
-						type, 
-						title.Serial, 
-						titleId, 
-						title.DecTitleKey, 
+						title.Name,
+						publisher,
+						title.Region,
+						type,
+						title.Serial,
+						titleId,
+						title.DecTitleKey,
 						sizeInMegabytes);
 
 					if (!parsedTickets.Exists(a => Equals(a, foundTicket)))
@@ -413,8 +418,8 @@ namespace NintendoCDN_TicketParser
 		}
 
 		private static List<Nintendo3DSRelease> LookUpRemainingTitles(
-			List<Nintendo3DSRelease> remainingTitles, 
-			int titlePad, 
+			List<Nintendo3DSRelease> remainingTitles,
+			int titlePad,
 			int publisherPad)
 		{
 			// the only reason I'm doing this unknownTitles thing is so we don't pollute the console output with them until the end.
@@ -460,9 +465,9 @@ namespace NintendoCDN_TicketParser
 		}
 
 		private static void WriteOutputToFile(
-			int titlePad, 
-			int publisherPad, 
-			List<Nintendo3DSRelease> titlesFound, 
+			int titlePad,
+			int publisherPad,
+			List<Nintendo3DSRelease> titlesFound,
 			List<Nintendo3DSRelease> remainingTitles)
 		{
 			var sb = new StringBuilder();
@@ -488,7 +493,7 @@ namespace NintendoCDN_TicketParser
 		}
 
 		private static void WriteOutputToCsv(
-			IEnumerable<Nintendo3DSRelease> titlesFound, 
+			IEnumerable<Nintendo3DSRelease> titlesFound,
 			IEnumerable<Nintendo3DSRelease> remainingTitles)
 		{
 			using (var writer = new StreamWriter(Files.DetailedOutputFile, false, Encoding.UTF8))
